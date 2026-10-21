@@ -39,7 +39,7 @@ export const config = {
   embeddingDimensions: Number(process.env.EMBEDDING_DIMENSIONS ?? 1536),
   // Core memories load into every session, so their total size is capped.
   coreLimits: {
-    maxCount: positiveInt("CORE_MEMORY_MAX_COUNT", 20),
-    maxChars: positiveInt("CORE_MEMORY_MAX_CHARS", 4000),
+    maxCount: positiveInt("CORE_MEMORY_MAX_COUNT", 30),
+    maxChars: positiveInt("CORE_MEMORY_MAX_CHARS", 12000),
   },
 };
