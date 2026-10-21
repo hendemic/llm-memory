@@ -10,7 +10,15 @@ if (!MCP_URL || !MCP_AUTH_TOKEN) {
   process.exit(2);
 }
 
-const EXPECTED_TOOLS = ["load_core_memories", "remember", "recall", "list_memories", "update_memory", "forget"];
+const EXPECTED_TOOLS = [
+  "load_core_memories",
+  "list_topics",
+  "remember",
+  "recall",
+  "list_memories",
+  "update_memory",
+  "forget",
+];
 // remember/update_memory reject content longer than this, so a cap above it can't be hit by one memory.
 const MAX_CONTENT = 20_000;
 
@@ -78,6 +86,14 @@ interface CoreState {
   core_memories: MemoryRow[];
   usage: { count: number; chars: number };
   limits: { max_count: number; max_chars: number };
+  topics: { tag: string; count: number }[];
+  topical_total: number;
+}
+
+interface TopicList {
+  topics: { tag: string; count: number; last_updated: string }[];
+  untagged: number;
+  total: number;
 }
 
 // The cap logic as a pure function: no server, no data.
@@ -162,6 +178,8 @@ async function main(): Promise<void> {
       const load = tools.find((t) => t.name === "load_core_memories");
       assert(load?.annotations?.readOnlyHint === true, "load_core_memories should be readOnlyHint");
       assert(load?._meta?.["anthropic/alwaysLoad"] === true, "load_core_memories should set anthropic/alwaysLoad");
+      const topics = tools.find((t) => t.name === "list_topics");
+      assert(topics?.annotations?.readOnlyHint === true, "list_topics should be readOnlyHint");
       for (const name of ["remember", "update_memory"]) {
         const props = tools.find((t) => t.name === name)?.inputSchema.properties ?? {};
         assert("core" in props, `${name} has no core param`);
@@ -207,6 +225,22 @@ async function main(): Promise<void> {
         assert(topical.length === 1 && topical[0].id === id, `core=false: got ${topical.length} row(s)`);
         const core = await callOk<MemoryRow[]>(client, "list_memories", { tags: [tag], core: true });
         assert(core.length === 0, `core=true: expected none, got ${core.length}`);
+      });
+
+      await step("list_topics and load_core_memories count the topical tag, without content", async () => {
+        const topical = await callOk<TopicList>(client, "list_topics", { core: false });
+        const hit = topical.topics.find((t) => t.tag === tag);
+        assert(hit?.count === 1, `expected ${tag} with count 1, got ${JSON.stringify(hit)}`);
+        assert(!JSON.stringify(topical).includes("Whiskers"), "list_topics leaked memory content");
+        const core = await callOk<TopicList>(client, "list_topics", { core: true });
+        assert(!core.topics.some((t) => t.tag === tag), "topical tag listed under core=true");
+        const loaded = await callOk<CoreState>(client, "load_core_memories", {});
+        assert(
+          loaded.topics.some((t) => t.tag === tag && t.count === 1),
+          "load_core_memories topics missing the tag",
+        );
+        assert(loaded.topical_total >= 1, `topical_total ${loaded.topical_total}`);
+        return `${topical.topics.length} topical tag(s), ${topical.total} topical memories`;
       });
 
       await step("update_memory changes content", async () => {

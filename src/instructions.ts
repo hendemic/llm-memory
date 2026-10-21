@@ -3,7 +3,7 @@
 // claude.ai currently ignores it, so the rules that matter are repeated in the tool descriptions.
 export const SERVER_INSTRUCTIONS = `Long-term memory that persists across the user's conversations.
 
-Start of every conversation: before replying to the first message, call load_core_memories once and treat the result as background about the user. Don't announce it.
+Start of every conversation: before replying to the first message, call load_core_memories once and treat the result as background about the user. Its topics list shows which tags topical memories use; recall with a tags filter to pull those in when relevant. Don't announce it.
 
 recall: search when past context about the user, their projects, preferences or earlier decisions could matter, and before asking the user something they may already have told you.
 
