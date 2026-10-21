@@ -20,11 +20,35 @@ The service is its own OAuth authorization server, built on the MCP SDK's auth r
 
 | Tool | Params | Description |
 | --- | --- | --- |
-| `remember` | `content` (string, required), `tags` (string[], default `[]`), `metadata` (object, default `{}`), `namespace` (default `"default"`) | Store a new memory. |
-| `recall` | `query` (string, required), `limit` (1-50, default 5), `tags` (string[], optional; match any), `min_similarity` (0-1, default 0.2), `namespace` | Semantic search; returns matches with a `similarity` score. |
-| `list_memories` | `limit` (1-200, default 20), `offset` (default 0), `tags` (optional; match any), `namespace` | List memories, newest first. |
-| `update_memory` | `id` (uuid, required), `content`, `tags`, `metadata` (all optional) | Change only the provided fields; new content is re-embedded. Tags and metadata replace existing values. |
+| `load_core_memories` | none | Return every core memory, plus current usage and the limits. Meant to be called at the start of every conversation. Read-only. |
+| `remember` | `content` (string, required), `tags` (string[], default `[]`), `metadata` (object, default `{}`), `core` (boolean, default `false`) | Store a new memory. `core: true` fails with a tool error if it would exceed the core limits. |
+| `recall` | `query` (string, required), `limit` (1-50, default 5), `tags` (string[], optional; match any), `min_similarity` (0-1, default 0.2) | Semantic search over all memories, core and topical; returns matches with a `similarity` score. |
+| `list_memories` | `limit` (1-200, default 20), `offset` (default 0), `tags` (optional; match any), `core` (boolean, optional) | List memories, newest first. `core` filters to core-only or topical-only. |
+| `update_memory` | `id` (uuid, required), `content`, `tags`, `metadata`, `core` (all optional) | Change only the provided fields; new content is re-embedded. Tags and metadata replace existing values. `core` promotes or demotes, subject to the core limits. |
 | `forget` | `id` (uuid, required) | Permanently delete a memory. Returns an error if the id does not exist. |
+
+Every record includes `core`. The server also sends MCP `instructions` covering when to recall, what to remember, tags, updating rather than duplicating, and the core rule below (see `src/instructions.ts`).
+
+**Namespaces are chosen by the server, not the model.** The `namespace` column still partitions memories and every query is scoped to it, but no tool exposes it. Each request uses the `default` pool, set in one place (`createServer({ namespace })` in `src/app.ts`), so separate pools per connector (say, work and personal) can be added later without touching the tools.
+
+## Core and topical memories
+
+Memories are **topical** by default: Claude finds them with `recall` when they are relevant. **Core** memories (`core = true`) are the small set Claude loads at the start of every conversation, such as who you are, standing preferences and ongoing priorities.
+
+Claude suggests, you confirm. The tool descriptions and server instructions tell Claude to set `core: true` only when you explicitly ask for something to always be remembered or loaded every session, or after it has asked and you agreed. It may suggest promoting a lasting, broadly relevant fact.
+
+The core set is capped, since it costs context in every conversation. The defaults are 20 memories and 4,000 characters in total (`CORE_MEMORY_MAX_COUNT`, `CORE_MEMORY_MAX_CHARS`). 4,000 characters is roughly 1,000 tokens per conversation, and 20 entries of about 200 characters each is plenty for standing facts. Anything more specific belongs in topical memory. A `remember` or `update_memory` call that would exceed either limit changes nothing and returns a tool error that lists the current core memories, so Claude can ask you which one to demote (`update_memory` with `core: false`) or shorten. The check runs in a transaction under an advisory lock, so concurrent promotions can't overshoot.
+
+### How core memories load in each client
+
+- **claude.ai (web, desktop, mobile)**: claude.ai doesn't pass MCP server `instructions` to the model, and it shows custom connector tools to the model by name only, until Claude searches for them. Nothing makes Claude call `load_core_memories` on its own, so tell it to in your settings. Add this to your personal preferences in claude.ai settings (or to a project's instructions):
+
+  > At the start of every conversation, before replying, call the `load_core_memories` tool from my memory connector and use what it returns as background. Use `recall` when my past context might help.
+
+  The connector must be turned on for the chat (**+ > Connectors**). Set `load_core_memories` to **Always allow** under the connector's tool permissions, so it runs without an approval prompt.
+- **Claude Code**: Claude Code puts the server instructions in context at session start, and they tell Claude to call `load_core_memories` first. The tool also sets `_meta["anthropic/alwaysLoad"]`, so Claude Code loads it upfront rather than behind tool search.
+
+Core memories are fetched by a tool call, not embedded in the instructions. claude.ai ignores instructions, Claude Code may serve them from a cached earlier session, and older Claude Code versions cut them at 2,048 characters.
 
 ## Environment variables
 
@@ -38,6 +62,8 @@ The service is its own OAuth authorization server, built on the MCP SDK's auth r
 | `EMBEDDING_BASE_URL` | no | `https://openrouter.ai/api/v1` | Any OpenAI-compatible embeddings endpoint. Set `https://api.openai.com/v1` to use OpenAI directly. |
 | `EMBEDDING_MODEL` | no | `openai/text-embedding-3-small` | Embedding model, as the endpoint names it (OpenAI directly calls it `text-embedding-3-small`). |
 | `EMBEDDING_DIMENSIONS` | no | `1536` | Vector size; fixed when the table is created. |
+| `CORE_MEMORY_MAX_COUNT` | no | `20` | Maximum number of core memories. |
+| `CORE_MEMORY_MAX_CHARS` | no | `4000` | Maximum total characters across all core memories. |
 | `PORT` | no | `3000` | HTTP port. |
 
 See `.env.example`.
@@ -107,7 +133,9 @@ Generic JSON config (clients supporting remote HTTP MCP servers with custom head
 
 ## Smoke test
 
-Runs end to end against a deployed (or local) server: checks 401 without auth, lists tools, then remembers, recalls, lists, updates, and forgets a memory in the `smoke-test` namespace.
+Runs end to end against a deployed (or local) server. It checks the core cap logic as a pure function, then 401 without auth, the server instructions, and the tool list (no `namespace` parameter anywhere). Then it remembers, recalls, lists, updates and forgets a topical memory. For core memories, it creates one, checks it appears in `load_core_memories`, then demotes and re-promotes it. It also checks that over-cap `remember` and `update_memory` calls return a tool error and change nothing.
+
+It creates at most two real memories, each tagged with a unique `smoke-<uuid>` tag. The cap checks use one memory longer than `CORE_MEMORY_MAX_CHARS`, which can never fit, so they never fill or disturb your real core set. If the live core set is already full, it skips the core lifecycle steps. Cleanup runs in `finally`. It deletes every memory carrying the run's tag, then fails the run if any are left, especially in `load_core_memories`.
 
 ```sh
 MCP_URL=https://<domain>/mcp MCP_AUTH_TOKEN=<token> npm run smoke
