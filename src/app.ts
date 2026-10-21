@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { authRouter, requireMcpAuth, type OwnerAuthProvider } from "./auth/index.js";
 import { pool } from "./db.js";
+import { DEFAULT_NAMESPACE } from "./memories.js";
 import { createServer } from "./server.js";
 
 export function createApp(provider: OwnerAuthProvider): Express {
@@ -23,7 +24,8 @@ export function createApp(provider: OwnerAuthProvider): Express {
 
   // Stateless Streamable HTTP: a fresh server + transport per request, no sessions to track.
   app.post("/mcp", requireMcpAuth(provider), async (req, res) => {
-    const server = createServer();
+    // One memory pool for now. A per-connector pool would be chosen here, e.g. from req.auth.
+    const server = createServer({ namespace: DEFAULT_NAMESPACE });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();

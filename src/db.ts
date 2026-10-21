@@ -3,6 +3,25 @@ import { config } from "./config.js";
 
 export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
 
+export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    // A client whose ROLLBACK failed is in an unknown state; discard it instead of returning it to the pool.
+    await client.query("ROLLBACK").catch((rollbackErr: Error) => {
+      broken = rollbackErr;
+    });
+    throw err;
+  } finally {
+    client.release(broken);
+  }
+}
+
 // Arbitrary constant so concurrent replicas don't race on schema creation.
 const MIGRATION_LOCK_ID = 727_001;
 
@@ -30,6 +49,11 @@ export async function migrate(): Promise<void> {
     await client.query("CREATE INDEX IF NOT EXISTS memories_tags_idx ON memories USING gin (tags)");
     await client.query(
       "CREATE INDEX IF NOT EXISTS memories_namespace_created_idx ON memories (namespace, created_at DESC)",
+    );
+    // Core memories load into every session; topical ones (the default) are found by recall.
+    await client.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS core boolean NOT NULL DEFAULT false");
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS memories_core_idx ON memories (namespace, created_at) WHERE core",
     );
 
     // The column dimension is fixed at creation; fail loudly if the configured model no longer matches.
