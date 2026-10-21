@@ -14,7 +14,10 @@ import {
 } from "./memories.js";
 
 const tags = z.array(z.string().min(1).max(100)).max(50);
-const metadata = z.record(z.string(), z.unknown());
+// A "core" key here is a common mistake (often from a stale tool schema) that would silently not take effect.
+const metadata = z
+  .record(z.string(), z.unknown())
+  .refine((m) => !("core" in m), "Don't put core in metadata; use the top-level core field.");
 const CORE_RULE =
   "Set core=true only if the user explicitly asked for this to always be remembered or loaded every session, " +
   "or you asked and they agreed; you may suggest it for lasting, broadly relevant facts.";
