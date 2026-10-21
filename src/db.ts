@@ -43,6 +43,42 @@ export async function migrate(): Promise<void> {
       );
     }
 
+    // OAuth state. Codes and tokens are stored only as sha256 hashes.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id   text PRIMARY KEY,
+        info        jsonb NOT NULL,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS oauth_codes (
+        code_hash       text PRIMARY KEY,
+        client_id       text NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
+        redirect_uri    text NOT NULL,
+        code_challenge  text NOT NULL,
+        scopes          text[] NOT NULL DEFAULT '{}',
+        resource        text NOT NULL,
+        expires_at      timestamptz NOT NULL,
+        created_at      timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        token_hash  text PRIMARY KEY,
+        kind        text NOT NULL CHECK (kind IN ('access', 'refresh')),
+        family_id   uuid NOT NULL,
+        client_id   text NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
+        scopes      text[] NOT NULL DEFAULT '{}',
+        resource    text NOT NULL,
+        expires_at  timestamptz NOT NULL,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS oauth_codes_expires_idx ON oauth_codes (expires_at)");
+    await client.query("CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at)");
+    await client.query("CREATE INDEX IF NOT EXISTS oauth_tokens_family_idx ON oauth_tokens (family_id)");
+
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");

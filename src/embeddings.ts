@@ -1,10 +1,10 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 
-const openai = new OpenAI({ apiKey: config.openaiApiKey });
+const client = new OpenAI({ apiKey: config.embeddingApiKey, baseURL: config.embeddingBaseUrl });
 
 export async function embed(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
+  const response = await client.embeddings.create({
     model: config.embeddingModel,
     input: text,
     dimensions: config.embeddingDimensions,
