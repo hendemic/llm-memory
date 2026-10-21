@@ -120,6 +120,40 @@ export async function listCoreMemories(namespace: string): Promise<Memory[]> {
   return rows;
 }
 
+export interface Topic {
+  tag: string;
+  count: number;
+  last_updated: Date;
+}
+
+// Bounds the response; tags past this are the least used.
+const MAX_TOPICS = 200;
+
+// Distinct tags with memory counts, most used first: an index of what's stored without the content.
+export async function listTopics(
+  namespace: string,
+  core?: boolean,
+): Promise<{ topics: Topic[]; untagged: number; total: number }> {
+  const [topics, totals] = await Promise.all([
+    pool.query<Topic>(
+      `SELECT tag, count(*)::int AS count, max(updated_at) AS last_updated
+       FROM memories, unnest(tags) AS tag
+       WHERE namespace = $1 AND ($2::boolean IS NULL OR core = $2::boolean)
+       GROUP BY tag
+       ORDER BY count DESC, tag
+       LIMIT $3`,
+      [namespace, core ?? null, MAX_TOPICS],
+    ),
+    pool.query<{ total: number; untagged: number }>(
+      `SELECT count(*)::int AS total, (count(*) FILTER (WHERE cardinality(tags) = 0))::int AS untagged
+       FROM memories
+       WHERE namespace = $1 AND ($2::boolean IS NULL OR core = $2::boolean)`,
+      [namespace, core ?? null],
+    ),
+  ]);
+  return { topics: topics.rows, ...totals.rows[0] };
+}
+
 export async function updateMemory(input: {
   namespace: string;
   id: string;

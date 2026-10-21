@@ -20,7 +20,8 @@ The service is its own OAuth authorization server, built on the MCP SDK's auth r
 
 | Tool | Params | Description |
 | --- | --- | --- |
-| `load_core_memories` | none | Return every core memory, plus current usage and the limits. Meant to be called at the start of every conversation. Read-only. |
+| `load_core_memories` | none | Return every core memory, plus current usage and the limits, and `topics`: the tags on topical memories with counts. Meant to be called at the start of every conversation. Read-only. |
+| `list_topics` | `core` (boolean, optional) | List tags in use with memory counts and last-updated times, most used first (up to 200), plus the total and untagged counts. No memory content. Read-only. |
 | `remember` | `content` (string, required), `tags` (string[], default `[]`), `metadata` (object, default `{}`), `core` (boolean, default `false`) | Store a new memory. `core: true` fails with a tool error if it would exceed the core limits. |
 | `recall` | `query` (string, required), `limit` (1-50, default 5), `tags` (string[], optional; match any), `min_similarity` (0-1, default 0.2) | Semantic search over all memories, core and topical; returns matches with a `similarity` score. |
 | `list_memories` | `limit` (1-200, default 20), `offset` (default 0), `tags` (optional; match any), `core` (boolean, optional) | List memories, newest first. `core` filters to core-only or topical-only. |
@@ -43,7 +44,7 @@ The core set is capped, since it costs context in every conversation. The defaul
 
 - **claude.ai (web, desktop, mobile)**: claude.ai doesn't pass MCP server `instructions` to the model, and it shows custom connector tools to the model by name only, until Claude searches for them. Nothing makes Claude call `load_core_memories` on its own, so tell it to in your settings. Add this to your personal preferences in claude.ai settings (or to a project's instructions):
 
-  > At the start of every conversation, before replying, call the `load_core_memories` tool from my memory connector and use what it returns as background. Use `recall` when my past context might help.
+  > At the start of every conversation, before replying, call the `load_core_memories` tool from my memory connector and use what it returns as background. Its `topics` list shows what else is stored; use `recall` with a tags filter when one of those topics, or my past context, might help.
 
   The connector must be turned on for the chat (**+ > Connectors**). Set `load_core_memories` to **Always allow** under the connector's tool permissions, so it runs without an approval prompt.
 - **Claude Code**: Claude Code puts the server instructions in context at session start, and they tell Claude to call `load_core_memories` first. The tool also sets `_meta["anthropic/alwaysLoad"]`, so Claude Code loads it upfront rather than behind tool search.
@@ -133,7 +134,7 @@ Generic JSON config (clients supporting remote HTTP MCP servers with custom head
 
 ## Smoke test
 
-Runs end to end against a deployed (or local) server. It checks the core cap logic as a pure function, then 401 without auth, the server instructions, and the tool list (no `namespace` parameter anywhere). Then it remembers, recalls, lists, updates and forgets a topical memory. For core memories, it creates one, checks it appears in `load_core_memories`, then demotes and re-promotes it. It also checks that over-cap `remember` and `update_memory` calls return a tool error and change nothing.
+Runs end to end against a deployed (or local) server. It checks the core cap logic as a pure function, then 401 without auth, the server instructions, and the tool list (no `namespace` parameter anywhere). Then it remembers, recalls, lists, updates and forgets a topical memory, and checks that `list_topics` and `load_core_memories` count its tag without returning its content. For core memories, it creates one, checks it appears in `load_core_memories`, then demotes and re-promotes it. It also checks that over-cap `remember` and `update_memory` calls return a tool error and change nothing.
 
 It creates at most two real memories, each tagged with a unique `smoke-<uuid>` tag. The cap checks use one memory longer than `CORE_MEMORY_MAX_CHARS`, which can never fit, so they never fill or disturb your real core set. If the live core set is already full, it skips the core lifecycle steps. Cleanup runs in `finally`. It deletes every memory carrying the run's tag, then fails the run if any are left, especially in `load_core_memories`.
 

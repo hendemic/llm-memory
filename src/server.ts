@@ -9,6 +9,7 @@ import {
   deleteMemory,
   listCoreMemories,
   listMemories,
+  listTopics,
   searchMemories,
   updateMemory,
 } from "./memories.js";
@@ -55,19 +56,42 @@ export function createServer({ namespace }: ServerOptions): McpServer {
       description:
         "Load the user's core memories: the small set of standing facts and preferences meant to be known in every conversation. " +
         "Call once at the start of every conversation, before replying to the first message, and use the result as background. " +
-        "Returns the memories plus current usage and limits.",
+        "Returns the memories, current usage and limits, and topics: the tags on topical memories with counts, " +
+        "so you know what recall (with a tags filter) can find without loading those memories.",
       annotations: { readOnlyHint: true },
       // Claude Code loads this tool upfront instead of behind tool search.
       _meta: { "anthropic/alwaysLoad": true },
     },
     async () => {
-      const memories = await listCoreMemories(namespace);
+      const [memories, topical] = await Promise.all([listCoreMemories(namespace), listTopics(namespace, false)]);
       return json({
         core_memories: memories,
         usage: { count: memories.length, chars: memories.reduce((sum, m) => sum + charLength(m.content), 0) },
         limits: { max_count: config.coreLimits.maxCount, max_chars: config.coreLimits.maxChars },
+        topics: topical.topics.map(({ tag, count }) => ({ tag, count })),
+        topical_total: topical.total,
       });
     },
+  );
+
+  server.registerTool(
+    "list_topics",
+    {
+      title: "List topics",
+      description:
+        "List the tags in use, with how many memories have each and when one was last updated, most used first. " +
+        "An index of what's stored without loading any content; follow up with recall or list_memories using a tags " +
+        "filter. load_core_memories already includes this for topical memories, so call it only to refresh mid-conversation " +
+        "or to include core memories.",
+      inputSchema: {
+        core: z
+          .boolean()
+          .optional()
+          .describe("If given, only tags on core (true) or topical (false) memories; otherwise all."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ core }) => json(await listTopics(namespace, core)),
   );
 
   server.registerTool(
