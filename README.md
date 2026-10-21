@@ -37,7 +37,7 @@ Memories are **topical** by default: Claude finds them with `recall` when they a
 
 Claude suggests, you confirm. The tool descriptions and server instructions tell Claude to set `core: true` only when you explicitly ask for something to always be remembered or loaded every session, or after it has asked and you agreed. It may suggest promoting a lasting, broadly relevant fact.
 
-The core set is capped, since it costs context in every conversation. The defaults are 20 memories and 4,000 characters in total (`CORE_MEMORY_MAX_COUNT`, `CORE_MEMORY_MAX_CHARS`). 4,000 characters is roughly 1,000 tokens per conversation, and 20 entries of about 200 characters each is plenty for standing facts. Anything more specific belongs in topical memory. A `remember` or `update_memory` call that would exceed either limit changes nothing and returns a tool error that lists the current core memories, so Claude can ask you which one to demote (`update_memory` with `core: false`) or shorten. The check runs in a transaction under an advisory lock, so concurrent promotions can't overshoot.
+The core set is capped, since it costs context in every conversation. The defaults are 30 memories and 12,000 characters in total (`CORE_MEMORY_MAX_COUNT`, `CORE_MEMORY_MAX_CHARS`). 12,000 characters is roughly 3,000 tokens per conversation, enough for a detailed profile and standing preferences. Anything more specific belongs in topical memory. A `remember` or `update_memory` call that would exceed either limit changes nothing and returns a tool error that lists the current core memories, so Claude can ask you which one to demote (`update_memory` with `core: false`) or shorten. The check runs in a transaction under an advisory lock, so concurrent promotions can't overshoot.
 
 ### How core memories load in each client
 
@@ -62,8 +62,8 @@ Core memories are fetched by a tool call, not embedded in the instructions. clau
 | `EMBEDDING_BASE_URL` | no | `https://openrouter.ai/api/v1` | Any OpenAI-compatible embeddings endpoint. Set `https://api.openai.com/v1` to use OpenAI directly. |
 | `EMBEDDING_MODEL` | no | `openai/text-embedding-3-small` | Embedding model, as the endpoint names it (OpenAI directly calls it `text-embedding-3-small`). |
 | `EMBEDDING_DIMENSIONS` | no | `1536` | Vector size; fixed when the table is created. |
-| `CORE_MEMORY_MAX_COUNT` | no | `20` | Maximum number of core memories. |
-| `CORE_MEMORY_MAX_CHARS` | no | `4000` | Maximum total characters across all core memories. |
+| `CORE_MEMORY_MAX_COUNT` | no | `30` | Maximum number of core memories. |
+| `CORE_MEMORY_MAX_CHARS` | no | `12000` | Maximum total characters across all core memories. |
 | `PORT` | no | `3000` | HTTP port. |
 
 See `.env.example`.
