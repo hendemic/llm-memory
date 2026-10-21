@@ -1,0 +1,53 @@
+import pg from "pg";
+import { config } from "./config.js";
+
+export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
+
+// Arbitrary constant so concurrent replicas don't race on schema creation.
+const MIGRATION_LOCK_ID = 727_001;
+
+export async function migrate(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [MIGRATION_LOCK_ID]);
+    await client.query("CREATE EXTENSION IF NOT EXISTS vector");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS memories (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        namespace   text NOT NULL DEFAULT 'default',
+        content     text NOT NULL,
+        embedding   vector(${config.embeddingDimensions}) NOT NULL,
+        tags        text[] NOT NULL DEFAULT '{}',
+        metadata    jsonb NOT NULL DEFAULT '{}',
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        updated_at  timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS memories_embedding_idx ON memories USING hnsw (embedding vector_cosine_ops)",
+    );
+    await client.query("CREATE INDEX IF NOT EXISTS memories_tags_idx ON memories USING gin (tags)");
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS memories_namespace_created_idx ON memories (namespace, created_at DESC)",
+    );
+
+    // The column dimension is fixed at creation; fail loudly if the configured model no longer matches.
+    const { rows } = await client.query<{ dims: number }>(`
+      SELECT atttypmod AS dims FROM pg_attribute
+      WHERE attrelid = 'memories'::regclass AND attname = 'embedding'
+    `);
+    if (rows[0] && rows[0].dims !== config.embeddingDimensions) {
+      throw new Error(
+        `memories.embedding has ${rows[0].dims} dimensions but EMBEDDING_DIMENSIONS is ${config.embeddingDimensions}`,
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
